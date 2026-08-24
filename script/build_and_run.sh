@@ -11,7 +11,10 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
+ASSET_CATALOG="$ROOT_DIR/Resources/Assets.xcassets"
+ASSET_PARTIAL_PLIST="$DIST_DIR/.AssetCatalogGeneratedInfo.plist"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -19,10 +22,29 @@ swift build --package-path "$ROOT_DIR" --configuration "$CONFIGURATION"
 BUILD_BINARY="$(swift build --package-path "$ROOT_DIR" --configuration "$CONFIGURATION" --show-bin-path)/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS"
+mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$ROOT_DIR/Config/Info.plist" "$APP_CONTENTS/Info.plist"
 chmod +x "$APP_BINARY"
+
+xcrun actool "$ASSET_CATALOG" \
+  --compile "$APP_RESOURCES" \
+  --platform macosx \
+  --minimum-deployment-target 15.0 \
+  --target-device mac \
+  --app-icon AppIcon \
+  --standalone-icon-behavior all \
+  --output-partial-info-plist "$ASSET_PARTIAL_PLIST" \
+  --warnings \
+  --notices \
+  --errors \
+  --output-format human-readable-text
+
+/usr/libexec/PlistBuddy -c "Merge $ASSET_PARTIAL_PLIST" "$APP_CONTENTS/Info.plist"
+rm -f "$ASSET_PARTIAL_PLIST"
+test -s "$APP_RESOURCES/Assets.car"
+test -s "$APP_RESOURCES/AppIcon.icns"
+
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_BUNDLE" >/dev/null
 
 open_app() {

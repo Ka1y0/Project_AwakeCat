@@ -25,6 +25,12 @@ AwakeCat does **not** change `com.apple.screensaver`, password-delay, Touch ID, 
 
 This is preferable to keeping a `caffeinate` child process alive: ownership and error handling stay in-process, assertion IDs are explicit, acquisition is atomic at the UI boundary, and cleanup does not depend on supervising another process.
 
+## Application icon
+
+The Finder/Applications icon is a separate full-size asset from the monochrome menu-bar status glyph. It uses one opaque dark graphite cat design, compiled from a standard macOS `AppIcon.appiconset` into both `Assets.car` and `AppIcon.icns`. All source representations are RGB with no alpha channel. The same reliable Dark design is used in Light and Dark appearance; macOS may still apply its optional system-wide icon tinting style.
+
+See [Documentation/APP_ICON.md](Documentation/APP_ICON.md) for the design direction, asset pipeline, appearance behavior, and visual evidence.
+
 ## Privacy and footprint
 
 AwakeCat is fully local. It has no network code, analytics, telemetry, account, updater, WebView, or third-party runtime dependency. There is no polling or repeating timer in the Release build. Ten-second idle samples measured 0.0% CPU in every Awake sample and all but one Normal sample (0.1%), three threads, and an 11 MB physical footprint.

@@ -12,6 +12,7 @@ Validation was performed on the actual Mac described in [PREFLIGHT.md](PREFLIGHT
 | Xcode Release tests | Pass | 8 tests, 0 failures; test build used `ENABLE_TESTABILITY=YES` for `@testable import` |
 | Debug build | Pass | SwiftPM and staged `.app` |
 | Release build | Pass | SwiftPM and staged/ad-hoc-signed `.app` |
+| Application icon | Pass | Opaque 16–1024 px asset catalog compiled to `Assets.car` and `AppIcon.icns`; Finder/Get Info verified in Light and Dark |
 | Assertion acquisition | Pass | AwakeCat PID owns both named IOKit assertions |
 | Assertion release | Pass | Neither AwakeCat name remains after Off/termination |
 | Ten ON/OFF cycles | Pass | 10 acquisitions/releases; no AwakeCat assertion afterward |

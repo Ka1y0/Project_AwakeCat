@@ -16,6 +16,18 @@ APP_BINARY="$APP_MACOS/$APP_NAME"
 ASSET_CATALOG="$ROOT_DIR/Resources/Assets.xcassets"
 ASSET_PARTIAL_PLIST="$DIST_DIR/.AssetCatalogGeneratedInfo.plist"
 
+case "$MODE" in
+  run|--build-only|build-only|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify) ;;
+  *)
+    echo "usage: $0 [run|--build-only|--debug|--logs|--telemetry|--verify]" >&2
+    exit 2
+    ;;
+esac
+case "$CONFIGURATION" in
+  debug|release) ;;
+  *) echo "CONFIGURATION must be debug or release" >&2; exit 2 ;;
+esac
+
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 swift build --package-path "$ROOT_DIR" --configuration "$CONFIGURATION"
@@ -25,6 +37,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$ROOT_DIR/Config/Info.plist" "$APP_CONTENTS/Info.plist"
+cp "$ROOT_DIR/LICENSE" "$APP_RESOURCES/LICENSE"
 chmod +x "$APP_BINARY"
 
 xcrun actool "$ASSET_CATALOG" \
@@ -40,7 +53,11 @@ xcrun actool "$ASSET_CATALOG" \
   --errors \
   --output-format human-readable-text
 
-/usr/libexec/PlistBuddy -c "Merge $ASSET_PARTIAL_PLIST" "$APP_CONTENTS/Info.plist"
+# Pass file paths as arguments instead of embedding them in PlistBuddy syntax.
+for icon_key in CFBundleIconName CFBundleIconFile; do
+  icon_value="$(/usr/bin/plutil -extract "$icon_key" raw -expect string -o - "$ASSET_PARTIAL_PLIST")"
+  /usr/bin/plutil -insert "$icon_key" -string "$icon_value" "$APP_CONTENTS/Info.plist"
+done
 rm -f "$ASSET_PARTIAL_PLIST"
 test -s "$APP_RESOURCES/Assets.car"
 test -s "$APP_RESOURCES/AppIcon.icns"
@@ -52,6 +69,8 @@ open_app() {
 }
 
 case "$MODE" in
+  --build-only|build-only)
+    ;;
   run)
     open_app
     ;;
@@ -72,7 +91,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--build-only|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

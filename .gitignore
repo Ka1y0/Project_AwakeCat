@@ -1,6 +1,25 @@
+# SwiftPM and generated application bundles
 .build/
 .swiftpm/
-DerivedData/
 dist/
+DerivedData/
+
+# Xcode user state and test output
+xcuserdata/
 *.xcuserstate
+*.xcresult/
+
+# Local diagnostics and macOS metadata
+*.log
 .DS_Store
+._*
+
+# Local credentials and signing material
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile

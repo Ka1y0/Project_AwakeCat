@@ -1,105 +1,98 @@
-# Validation record
+# Validation
 
-Validation was performed on the actual Mac described in [PREFLIGHT.md](PREFLIGHT.md), not only with mocks. Temporary artifacts were written under `/private/tmp`; AwakeCat did not change any power, screen-saver, authentication, or security preference. Overall status is **PASS**: automatic idle-lock prevention and the physical Control-Command-Q safety check both passed on the actual Mac. An idle-system-sleep transition could not be independently observed because of the host's existing power configuration and unrelated sleep assertions; that evidence boundary is recorded below.
+AwakeCat separates deterministic unit tests from native power-assertion checks and observations that require an idle or manually locked Mac. These checks do not change power, screen-saver, authentication, or login-item settings.
 
-## Result summary
+## Repeatable checks
 
-| Check | Result | Evidence |
-| --- | --- | --- |
-| SwiftPM Debug tests | Pass | 8 tests, 0 failures |
-| SwiftPM Release tests | Pass | 8 tests, 0 failures |
-| Xcode Debug tests | Pass | 8 tests, 0 failures |
-| Xcode Release tests | Pass | 8 tests, 0 failures; test build used `ENABLE_TESTABILITY=YES` for `@testable import` |
-| Debug build | Pass | SwiftPM and staged `.app` |
-| Release build | Pass | SwiftPM and staged/ad-hoc-signed `.app` |
-| Application icon | Pass | Opaque 16–1024 px asset catalog compiled to `Assets.car` and `AppIcon.icns`; Finder/Get Info verified in Light and Dark |
-| Assertion acquisition | Pass | AwakeCat PID owns both named IOKit assertions |
-| Assertion release | Pass | Neither AwakeCat name remains after Off/termination |
-| Ten ON/OFF cycles | Pass | 10 acquisitions/releases; no AwakeCat assertion afterward |
-| Actual idle automatic lock | Pass on this Mac | Eyes-open UI path, 660.5 s continuous HID idle, `IOConsoleLocked = No`; `loginwindow` records PM display-sleep protection suppressing idle launch |
-| Screen saver defeating protection | Pass on this Mac | Normal logs launch at 600 s; Awake logs `PMNoDisplaySleepEnabled so do not launch screen saver` |
-| Long-running process | Pass | AwakeCat remained responsive/running through the 660.5 s and 865 s idle observations |
-| Crash cleanup | Pass | `SIGKILL` removed both process-owned assertions |
-| Normal/Awake resources | Pass | Approximately 0% CPU/power, 11 MB, 3 threads in 10 samples per state |
-| Manual Control-Command-Q | Pass | With Awake active, the physical shortcut entered Lock Screen normally; AwakeCat neither intercepted it nor attempted to unlock |
-| Physical idle-system-sleep transition | Not independently observable | Host AC `sleep = 0`, `displaysleep = 0`, with unrelated processes also holding sleep assertions |
+Run from the repository root with the active Xcode toolchain:
 
-The final Xcode Release test invocation supplied `ENABLE_TESTABILITY=YES` as a test-only command-line build setting because the generated SwiftPM Xcode scheme otherwise hides `AwakeCatCore` from `@testable import` in Release. The separately staged production Release bundle was rebuilt afterward without that override.
-
-## Automatic-lock acceptance test
-
-The decisive run used the actual status-item button action via a Debug-only UI harness, then observed the real machine without changing its 600-second screen-saver preference:
-
-```text
-Mode:                  UI / eyes-open path
-Wall time:             990 s (wait extended after incidental input)
-Continuous HID idle:   660,515,356,000 ns (660.5 s)
-Screen-saver idleTime: 600 before; 600 after
-Console lock state:    IOConsoleLocked = No
-Process state:         running
-AwakeCat PID:          43226
+```sh
+swift package clean
+swift test --configuration debug
+swift test --configuration release
+./script/build_and_run.sh --verify
+CONFIGURATION=release ./script/build_and_run.sh --verify
+codesign --verify --deep --strict dist/AwakeCat.app
 ```
 
-At the end of the continuous-idle window, `pmset -g assertions` attributed exactly these entries to PID 43226:
+The eight XCTest cases exercise initial state, successful and failed acquisition, retained partial cleanup, release retry, repeated toggles, recovery error reporting, and coordinator forwarding. No dedicated XCUITest target exists. `for script_path in script/*.sh; do bash -n "$script_path" || exit; done` checks shell syntax; no additional static-check tool is configured.
 
-```text
-PreventUserIdleSystemSleep
-  "AwakeCat: prevent automatic idle system sleep"
-PreventUserIdleDisplaySleep
-  "AwakeCat: keep display awake to prevent automatic idle lock"
+### Native integration hooks (Debug only)
+
+Build Debug first. These explicit command-line hooks use the production coordinator without starting an AppKit UI, so invoking the executable directly is intentional here:
+
+```sh
+swift build --configuration debug
+AWAKECAT_BINARY="$(swift build --configuration debug --show-bin-path)/AwakeCat"
+"$AWAKECAT_BINARY" --validation-cycle 10
+"$AWAKECAT_BINARY" --validation-awake-seconds 10
 ```
 
-After the app was stopped, neither AwakeCat assertion appeared, and `idleTime` was still 600. A second 660-second power-only run produced the same unlocked result, with 865 seconds of HID inactivity at capture.
+While the timed probe runs, inspect `pmset -g assertions` in another terminal. Match the probe PID and both exact names:
 
-The power evidence is corroborated by the macOS screen-saver decision logs:
+- `AwakeCat: prevent automatic idle system sleep`
+- `AwakeCat: keep display awake to prevent automatic idle lock`
 
-```text
-08:47:39 Normal: actualUserIdle = 600.0; starting screen saver due to user idle
-08:47:39 Normal: processing lock screen request, reason: 3
-10:10:58 Awake: PMNoDisplaySleepEnabled so do not launch screen saver
-10:18:40 Awake: actualUserIdle = 423.7; PMNoDisplaySleepEnabled so do not launch screen saver
+Neither assertion should remain for that PID afterward. A separate Debug hook, `--validation-crash-after-awake`, stops its own probe with `SIGSTOP` after acquiring both assertions so a test harness can inspect ownership, send `SIGKILL` to that exact probe PID, and verify OS cleanup. Do not target an unrelated or daily-use app process.
+
+To exercise the real status-item button action, stage Debug and launch the bundle:
+
+```sh
+./script/build_and_run.sh --build-only
+open -n dist/AwakeCat.app --args --validation-ui-awake
 ```
 
-The final `pmset` sample at 10:22 listed AwakeCat as the only owner of `PreventUserIdleDisplaySleep`. A WindowServer `UserIsActive` record from the last UI event was also present, but `loginwindow` explicitly attributed its decision not to launch to the PM no-display-sleep state. In Normal mode, the same configured idle path reached 600 seconds, started the saver, and processed an immediate lock.
+This performs the existing status-item button action and should acquire both assertions. Use the menu to disable protection and quit. All validation argument handlers and UI hooks are excluded from Release.
 
-No screen-saver override was used or required on this tested Mac. The supported display assertion caused `loginwindow` to defer the idle screen saver, and Off restored the ordinary 600-second path without changing that preference.
+### Optional idle and manual-lock observations
 
-## Toggle, quit, and crash cleanup
+These scripts need `rg` (ripgrep) in addition to the build requirements. Their outputs include system diagnostics; keep the output directories private and redact before sharing.
 
-- A Debug harness exercised 10 ON/OFF cycles through the production coordinator. Every cycle logged one ON and one OFF; the final `pmset` scan contained no AwakeCat assertion names.
-- Quitting while Normal left no assertion or preference change.
-- Terminating while Awake removed both process-owned assertions.
-- A forced `SIGKILL` while both assertions were visible also removed both. Since the production design has no persistent preference override, crash recovery is intentionally a no-op and repeated relaunches start Normal.
+- `./script/validate_real_idle.sh ui`: requires a staged Debug bundle. It starts a probe and waits for at least 660 continuous seconds without keyboard/mouse input (up to 30 minutes), checking the unlocked session, assertion ownership, and unchanged screen-saver timer. It assumes the original 600-second idle timer; it is not a general acceptance test for a machine configured with another timer. `power-only` and `full` modes exercise the non-UI Debug hooks instead.
+- `./script/observe_manual_lock.sh <AwakeCat-pid>`: with Awake enabled, waits up to three minutes for a person to press Control-Command-Q, checks that the session stays locked for ten seconds, and waits up to five minutes for manual unlock. It does not inject keys or unlock the Mac.
 
-## Atomic failure behavior
+Both scripts create a unique directory in the system temporary location unless an output directory is supplied. The idle observer starts a separate process; quit other AwakeCat instances first because its final cleanup check expects no AwakeCat assertions to remain.
 
-Unit tests verify that the state becomes Awake only after successful acquisition, acquisition failure never renders Awake, a release failure retains the session for retry, and 10 controller cycles leave no active session. The IOKit implementation releases an already-created system assertion if display-assertion acquisition fails; if that rollback itself fails, it returns a retained cleanup session so the next click or Quit retries cleanup. Error uses a distinct one-eye-open glyph, never the authoritative closed-eye Normal glyph.
+## Original device observations — 2026-08-24
 
-## Manual-lock safety
+The original implementation records report macOS 26.5.2 (25F84), Apple Silicon, Xcode 26.6 (17F113), Swift 6.3.3, and macOS SDK 26.5. These are historical observations, not measurements repeated on every build:
 
-The production sources contain no `CGEvent`, event tap, `IOHID`, Accessibility injection, lock interception, authentication, password, or auto-unlock implementation. IOKit idle assertions do not implement explicit-lock interception.
+- Eight tests passed in SwiftPM Debug/Release and Xcode Debug/Release. Xcode Release tests used the test-only `ENABLE_TESTABILITY=YES` override; the separately built production bundle did not.
+- A Debug status-item button probe stayed unlocked through 660.5 seconds of continuous HID inactivity with a 600-second screen-saver timer. Both named IOKit assertions were present. The macOS screen-saver logs attributed deferral to display-sleep protection. A separate power probe observed 865 seconds of inactivity with the same outcome.
+- A physical Control-Command-Q test entered Lock Screen normally while Awake was active. Unlocking followed normal macOS authentication. AwakeCat neither intercepted the shortcut nor attempted authentication.
+- Ten native ON/OFF cycles, termination, and forced-crash cleanup left no AwakeCat assertions.
+- Finder/Get Info displayed the application icon in Light and Dark appearance. All ten source and compiled icon sizes were opaque RGB; Debug/Release bundle signatures verified.
+- Ten one-second resource samples reported approximately 0% CPU, an 11 MB physical footprint, and three threads. These are short observations on one Mac, not performance guarantees.
 
-A final physical Control-Command-Q test was completed while Awake mode was active. macOS entered Lock Screen normally. AwakeCat did not intercept or suppress the shortcut, bypass authentication, or attempt to unlock the session. Returning to the GUI session followed the user's ordinary macOS authentication/unlock path. Result: **PASS**.
+The original host already had AC idle-system and display sleep disabled and other processes held sleep assertions. A physical idle-system-sleep transition could not be isolated. The evidence proves assertion ownership and the observed automatic-lock outcome on that machine, not a universal guarantee about managed policy, closed-lid behavior, every macOS version, or sleep transitions.
 
-An earlier read-only observation window had timed out before the shortcut was entered. That incomplete attempt is superseded by the completed physical test above. Synthetic shortcut injection was not used, and AwakeCat does not request Input Monitoring permission.
+## Open-source publication validation — 2026-09-05
 
-A separate explicit ScreenSaverEngine request at 10:39:27 was made while PID 52643 owned both AwakeCat assertions. `loginwindow` recorded a running screen saver and processed lock request reason 4. macOS then reported Apple Watch Auto Unlock; no AwakeCat process was involved in unlocking. This independently corroborates that explicit lock remains authoritative while Awake mode is active.
+Environment: macOS 26.6.2 (25G83), Apple Silicon, Xcode 26.6 (17F113), Swift 6.3.3, macOS SDK 26.5. The application deployment target remains macOS 15.0.
 
-## Resource measurements
+| Check | Result |
+| --- | --- |
+| `swift package clean`, then `swift test --configuration debug` | Passed; 8 tests, 0 failures |
+| `swift test --configuration release` | Passed; 8 tests, 0 failures |
+| `xcodebuild -scheme AwakeCat-Package -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath <temporary-directory> test` | Passed; 8 tests, 0 failures |
+| Same Xcode command with `-configuration Release ENABLE_TESTABILITY=YES` | Passed; 8 tests, 0 failures; test-only setting |
+| `./script/build_and_run.sh --verify` | Debug build, icon compilation, ad-hoc signing, and launch passed |
+| `CONFIGURATION=release ./script/build_and_run.sh --verify` | Release build, icon compilation, ad-hoc signing, and launch passed |
+| Existing Debug native probes | 10 cycles, timed release, SIGTERM cleanup, and stopped-probe SIGKILL cleanup passed; both named assertions matched by PID |
+| Existing `--validation-ui-awake` bundle hook | Status-item button action acquired both assertions; termination released both |
+| `codesign --verify --deep --strict dist/AwakeCat.app` | Passed for Debug and Release; no signing identity or team required |
+| Icon source and `assetutil --info` / `iconutil --convert iconset` | All 10 source sizes and compiled RGB/opaque renditions validated; all 10 ICNS representations unpacked |
+| Bundle metadata and contents | Identifier, macOS minimum, icon keys, and MIT license verified; Release executable strings contain no Debug validation arguments or personal build path |
+| Path portability | Fresh Release build through a temporary path alias containing spaces with `--scratch-path`; complete bundle script run from outside the checkout through the same alias passed |
+| Repository checks | Every shell script passed `bash -n`; plist lint, Markdown local links, English documentation, and `git diff --check` passed |
+| Secrets and history | Gitleaks 8.30.1 reported no leaks in full history or working tree; all original Git objects and PNG metadata were separately inspected |
+| Dependencies and provenance | No third-party packages, vendored frameworks, fonts, certificates, provisioning profiles, or private signing material found; generated icon provenance reviewed |
+| Preservation | Application Swift sources, tests, package manifest, and source icon hashes unchanged |
 
-Ten one-second `top` samples in Normal and Awake showed:
+Xcode reported only its non-blocking App Intents metadata-extraction warning because the app has no AppIntents dependency. No compiler or asset-catalog warnings were found. The production Release bundle was built separately without the Xcode testability override.
 
-```text
-CPU:              0.0% in every Awake sample; 0.0% except one 0.1% Normal sample
-Power impact:     0.0 in every Awake sample; 0.0 except one 0.1 Normal sample
-Memory:           11 MB stable
-Physical footprint: 11 MB
-Threads:          3
-CPU time:         unchanged at 0.09 s across the Awake sample
-```
+The path test exposed an existing `PlistBuddy` merge failure with spaces in the checkout path. Bundle assembly now inserts the two generated icon keys with `plutil`, passing paths as separate quoted arguments. Debug and Release bundle checks were repeated after this fix. The path test used an alias to the canonical checkout, not a second project copy. Dependency inspection found only local targets and system libraries; the build scripts derive paths from their own location.
 
-The Release sources have no repeating timer, polling loop, network path, analytics, or telemetry. Debug-only validation code may sleep for bounded test durations and is compiled out of Release.
+The original two commits remain intact, including their author attribution and historical Finder screenshots with the author's local username/project path. That existing author email was already present in the owner's public commit history. Current documentation omits those screenshots and machine-specific preflight details. No credential or sensitive signing artifact was found in historical content; the only unreachable Git object was an empty blob.
 
-## Caveats in the evidence
-
-This Mac already used AC `sleep = 0` and `displaysleep = 0`, while unrelated processes held their own system-sleep assertions. Changing system-wide power settings solely to force a sleep transition would have been disruptive. Accordingly the report proves AwakeCat's display/system assertion ownership and the actual automatic-lock outcome, but a before/after physical idle-system-sleep transition was not independently observable on this host. This limitation does not alter the automatic-lock acceptance result or the verified ownership and cleanup of AwakeCat's native system-sleep assertion.
+Fresh long-idle, physical Control-Command-Q, closed-lid, Intel, and Developer ID login-item tests were not performed in this pass. The historical observations above remain explicitly dated; no system sleep, security, or login-item preferences were changed.

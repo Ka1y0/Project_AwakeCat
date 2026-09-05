@@ -2,9 +2,9 @@
 set -euo pipefail
 
 MODE="${1:-power-only}"
-ARTIFACT_DIR="${2:-/private/tmp/AwakeCat_real_idle_validation}"
+ARTIFACT_DIR="${2:-$(mktemp -d "${TMPDIR:-/tmp}/AwakeCat_idle.XXXXXX")}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AWAKECAT_BINARY="$ROOT_DIR/.build/arm64-apple-macosx/debug/AwakeCat"
+AWAKECAT_BINARY="$(swift build --package-path "$ROOT_DIR" --configuration debug --show-bin-path)/AwakeCat"
 TARGET_IDLE_SECONDS=660
 MAX_WAIT_SECONDS=1800
 RG_BIN="$(command -v rg)"

@@ -1,68 +1,107 @@
 # AwakeCat
 
-AwakeCat is a deliberately small, menu-bar-only macOS utility for long local coding and automation sessions.
+AwakeCat is a lightweight macOS menu-bar utility that keeps your Mac and display awake during long local work sessions. Click the cat when you need uninterrupted coding, processing, or automation; click again to let macOS follow its normal idle behavior. It is small, fully local, and starts with keep-awake protection off.
 
-- Closed eyes mean **Normal**: AwakeCat owns no power assertions and macOS follows the user's existing idle behavior.
-- Open eyes mean **Awake**: AwakeCat prevents automatic idle system sleep and keeps the display awake so this Mac does not reach its configured idle screen saver and lock path.
-- Left-click the cat to toggle. Right-click or Control-click for status, Keep Awake, Launch at Login, About, and Quit.
+## Features
 
-AwakeCat starts in Normal every time. It never auto-unlocks, intercepts Control-Command-Q, changes authentication, bypasses lid-close sleep, or blocks an explicit user-requested sleep.
+- One-click keep-awake toggle with distinct Normal, Awake, and Error icons.
+- Native menu-bar controls, accessibility labels, and an optional Launch at Login setting.
+- Process-owned power assertions, with cleanup on disable, quit, or process exit.
+- No accounts, network services, analytics, updater, or third-party packages.
 
-## How it works
+## Requirements
 
-AwakeCat acquires two process-owned IOKit assertions only after the user enables Awake:
+- macOS 15 or later.
+- Xcode with Swift 6.2 or later and its macOS SDK; select it as the active developer directory.
+- Apple Silicon is validated. The package does not restrict CPU architecture, but Intel Macs have not been validated.
+
+## Build from source
+
+```sh
+git clone https://github.com/Ka1y0/Project_AwakeCat.git
+cd Project_AwakeCat
+swift test
+./script/build_and_run.sh --verify
+```
+
+The script builds a Debug executable, compiles the app icon, stages `dist/AwakeCat.app`, ad-hoc signs it, and launches it. It stops an existing AwakeCat process before rebuilding; the new process starts in Normal.
+
+For an optimized Release bundle without launching it:
+
+```sh
+CONFIGURATION=release ./script/build_and_run.sh --build-only
+open dist/AwakeCat.app
+```
+
+Builds use the current checkout's location, including paths containing spaces. No Apple Developer account or private signing identity is needed for a local build. The bundle identifier remains `com.kuiyu.awakecat`.
+
+To install your build, quit AwakeCat and copy `dist/AwakeCat.app` into Applications. This repository provides source and a local build workflow, not a notarized installer. Ad-hoc signing is not Developer ID signing or notarization; distributing a downloaded binary requires a separate signing and distribution workflow.
+
+## Usage
+
+- **Closed eyes / Normal:** AwakeCat holds no power assertions.
+- **Open eyes / Awake:** both idle-system and idle-display assertions are active.
+- **One eye open / Error:** protection or cleanup failed; click to retry, or open the menu for controls. Do not assume full protection in this state.
+- **Left-click** toggles protection. **Right-click or Control-click** opens the menu with status, Keep Awake, Launch at Login, About, and Quit.
+
+Launch at Login uses macOS `SMAppService.mainApp`. Install the app in Applications first; availability and approval are controlled by macOS in System Settings → General → Login Items. Registration is not enabled automatically, and local ad-hoc builds may not behave like a normally signed installed app. A login launch still starts in Normal.
+
+## How AwakeCat keeps macOS awake
+
+AwakeCat calls the public IOKit `IOPMAssertionCreateWithName` API for:
 
 - `kIOPMAssertionTypePreventUserIdleSystemSleep`
 - `kIOPMAssertionTypePreventUserIdleDisplaySleep`
 
-The app calls `IOPMAssertionCreateWithName` for both and does not show the open-eye state unless both calls succeed. A partial acquisition is rolled back. Toggling Off or quitting calls `IOPMAssertionRelease` for every acquired ID; macOS also removes process-owned assertions if the process crashes.
+The app shows Awake only after both succeed. A partial acquisition is rolled back; failed cleanup is retained for retry. Disabling protection or quitting releases the assertion IDs. macOS also removes process-owned assertions when the process exits, including a crash.
 
-During an actual 660-second continuous-HID-inactivity observation against this Mac's configured 600-second screen-saver timer, the session remained unlocked and AwakeCat owned both assertions. macOS `loginwindow` logs supply the causal check: Normal mode reached 600 seconds and logged “starting screen saver due to user idle” before locking, whereas the Awake run logged `PMNoDisplaySleepEnabled so do not launch screen saver`. The final `pmset` capture contained no other user display-sleep assertion owner. This proves the automatic-lock outcome on this Mac despite a concurrent WindowServer `UserIsActive` record.
+Keeping the display awake can defer the idle screen saver and its associated automatic lock. This was observed on the original test Mac, but is not a universal guarantee across macOS versions and managed policies. AwakeCat does not edit power settings, screen-saver timers, password delays, or authentication preferences. See the [validation record](Documentation/VALIDATION.md) for the evidence and its limits, and [Apple's display assertion documentation](https://developer.apple.com/documentation/iokit/kiopmassertiontypepreventuseridledisplaysleep) for the underlying API.
 
-Manual-lock safety was also verified with a physical Control-Command-Q test while Awake was active: macOS entered Lock Screen normally, and AwakeCat neither intercepted the shortcut nor attempted to bypass authentication or unlock the session.
+## Keyboard and system behavior
 
-AwakeCat does **not** change `com.apple.screensaver`, password-delay, Touch ID, FileVault, or any other user/system preference. No temporary screen-saver override is implemented, and there is no recovery metadata because there is no persistent override to recover.
+Control-Command-Q still locks the Mac. AwakeCat does not intercept keys, simulate input, unlock a session, or bypass authentication. The context menu has the standard Command-Q Quit item; there is no global keep-awake shortcut. Closing the lid, choosing Sleep, low battery, and system or management policy remain under macOS control.
 
-This is preferable to keeping a `caffeinate` child process alive: ownership and error handling stay in-process, assertion IDs are explicit, acquisition is atomic at the UI boundary, and cleanup does not depend on supervising another process.
+## Project structure
 
-## Application icon
+| Path | Purpose |
+| --- | --- |
+| `Package.swift` | SwiftPM targets and macOS deployment target |
+| `Sources/AwakeCat/` | AppKit entry point, menu-bar UI, login-item integration, Debug validation hooks |
+| `Sources/AwakeCatCore/` | State controller and IOKit assertion ownership/cleanup |
+| `Tests/AwakeCatCoreTests/` | State and coordinator tests |
+| `Config/Info.plist` | App identity and bundle metadata |
+| `Resources/Assets.xcassets/` | Application icon source representations |
+| `script/` | Build/run and optional real-machine observations |
 
-The Finder/Applications icon is a separate full-size asset from the monochrome menu-bar status glyph. It uses one opaque dark graphite cat design, compiled from a standard macOS `AppIcon.appiconset` into both `Assets.car` and `AppIcon.icns`. All source representations are RGB with no alpha channel. The same reliable Dark design is used in Light and Dark appearance; macOS may still apply its optional system-wide icon tinting style.
+## Development and testing
 
-See [Documentation/APP_ICON.md](Documentation/APP_ICON.md) for the design direction, asset pipeline, appearance behavior, and visual evidence.
-
-## Privacy and footprint
-
-AwakeCat is fully local. It has no network code, analytics, telemetry, account, updater, WebView, or third-party runtime dependency. There is no polling or repeating timer in the Release build. Ten-second idle samples measured 0.0% CPU in every Awake sample and all but one Normal sample (0.1%), three threads, and an 11 MB physical footprint.
-
-## Build and run
-
-Requirements: Apple Silicon Mac, macOS 15 or later, Xcode with Swift 6.2 or later.
-
-```sh
-swift test
-./script/build_and_run.sh
-```
-
-The script builds and ad-hoc signs `dist/AwakeCat.app`. Set `CONFIGURATION=release` for a Release bundle:
+Open `Package.swift` in Xcode for editing. Use the bundle script to run the menu-bar app with its metadata and icon. It accepts `--build-only`, `--verify`, `--debug` (LLDB), and `--logs` (local macOS log stream).
 
 ```sh
-env CONFIGURATION=release ./script/build_and_run.sh --verify
+swift package clean
+swift test --configuration debug
+swift test --configuration release
+./script/build_and_run.sh --build-only
+CONFIGURATION=release ./script/build_and_run.sh --build-only
+codesign --verify --deep --strict dist/AwakeCat.app
 ```
 
-Launch at Login uses `SMAppService.mainApp`, is Off by default, and is available after placing a normally signed application bundle in Applications.
+The eight unit tests cover state transitions, failed acquisition/cleanup, retry, and repeated toggles. They use fake providers; native assertion and UI checks are separate. There is no dedicated XCUITest target or configured third-party linter. See [Documentation/VALIDATION.md](Documentation/VALIDATION.md) for Debug integration commands and optional idle/manual-lock observations. Keep diagnostic logs local and remove personal data before sharing a bug report.
 
-## Tested environment
+Contributions should keep the app small and preserve power-management and manual-lock behavior. Include the macOS/Xcode version, reproduction steps, and relevant test results with a change.
 
-- macOS 26.5.2 (25F84), Apple Silicon (`arm64`)
-- Xcode 26.6 (17F113)
-- Apple Swift 6.3.3
-- macOS SDK 26.5
-- deployment target: macOS 15.0
+## Privacy
 
-See [Documentation/PREFLIGHT.md](Documentation/PREFLIGHT.md) and [Documentation/VALIDATION.md](Documentation/VALIDATION.md) for the observed configuration and evidence.
+AwakeCat has no network code, analytics, telemetry, account, cloud dependency, or access to personal files. Release builds have no polling loop or repeating timer. Launch-at-login registration is handled locally by macOS. Optional developer scripts capture local system diagnostics; those files are not part of the application and should not be committed.
 
-## Known limitations
+## Limitations
 
-- Assertions apply only while AwakeCat is running and Awake is enabled. Managed/MDM policy, explicit Lock Screen, explicit sleep, and lid close remain authoritative.
-- This Mac's existing AC `sleep` and `displaysleep` values were both `0`, and unrelated apps also held sleep assertions. Assertion ownership and the unlocked automatic-idle outcome were proved, but an idle-system-sleep transition could not be independently observed without changing broader power settings or disrupting the session.
+- Protection works only while AwakeCat is running and Awake is enabled. It is not restored automatically after relaunch.
+- Closed-lid operation, explicit sleep, explicit lock, low-battery sleep, and managed-policy overrides are unsupported.
+- An idle-display assertion does not turn on an already sleeping display.
+- Keeping the display and system awake uses more energy; turn protection off when finished.
+- Intel hardware, all supported macOS versions, and login-item behavior with a Developer ID signed build have not been validated in this publication pass.
+
+## License
+
+[MIT](LICENSE), copyright 2026 KAIYO (Ka1y0). There are no third-party package dependencies or bundled fonts. The application icon's generated-artwork provenance and licensing scope are recorded in [Documentation/APP_ICON.md](Documentation/APP_ICON.md). Apple frameworks and system components retain their own licenses.

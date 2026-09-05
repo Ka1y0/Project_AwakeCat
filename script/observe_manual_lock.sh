@@ -2,7 +2,7 @@
 set -euo pipefail
 
 AWAKECAT_PID="${1:?usage: observe_manual_lock.sh <AwakeCat-pid> [artifact-dir]}"
-ARTIFACT_DIR="${2:-/private/tmp/AwakeCat_observed_manual_lock}"
+ARTIFACT_DIR="${2:-$(mktemp -d "${TMPDIR:-/tmp}/AwakeCat_manual_lock.XXXXXX")}"
 MAX_LOCK_WAIT_SECONDS=180
 MAX_UNLOCK_WAIT_SECONDS=300
 RG_BIN="$(command -v rg)"
